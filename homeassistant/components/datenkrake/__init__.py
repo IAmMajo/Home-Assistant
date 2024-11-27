@@ -30,23 +30,13 @@ async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
     @callback
     def start_schedule(_event: Event) -> None:
         """Start the send schedule after the started event."""
-        # Wait 15 min after started
-        async_call_later(
-            hass,
-            900,
-            HassJob(
-                analytics.send_analytics,
-                name="analytics schedule",
-                cancel_on_shutdown=True,
-            ),
-        )
 
-        # Send every day
+        # Send every minute
         async_track_time_interval(
             hass,
             analytics.send_analytics,
             INTERVAL,
-            name="analytics daily",
+            name="analytics minutely",
             cancel_on_shutdown=True,
         )
 

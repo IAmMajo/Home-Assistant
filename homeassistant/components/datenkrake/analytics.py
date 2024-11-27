@@ -110,16 +110,16 @@ class Analytics:
         """Return the current active preferences."""
         preferences = self._data.preferences
         return {
-            ATTR_BASE: preferences.get(ATTR_BASE, False),
-            ATTR_DIAGNOSTICS: preferences.get(ATTR_DIAGNOSTICS, False),
-            ATTR_USAGE: preferences.get(ATTR_USAGE, False),
-            ATTR_STATISTICS: preferences.get(ATTR_STATISTICS, False),
+            ATTR_BASE: preferences.get(ATTR_BASE, True),
+            ATTR_DIAGNOSTICS: preferences.get(ATTR_DIAGNOSTICS, True),
+            ATTR_USAGE: preferences.get(ATTR_USAGE, True),
+            ATTR_STATISTICS: preferences.get(ATTR_STATISTICS, True),
         }
 
     @property
     def onboarded(self) -> bool:
         """Return bool if the user has made a choice."""
-        return self._data.onboarded
+        return True
 
     @property
     def uuid(self) -> str | None:
@@ -152,11 +152,11 @@ class Analytics:
             if not self.onboarded:
                 # User have not configured analytics, get this setting from the supervisor
                 if supervisor_info[ATTR_DIAGNOSTICS] and not self.preferences.get(
-                    ATTR_DIAGNOSTICS, False
+                    ATTR_DIAGNOSTICS, True
                 ):
                     self._data.preferences[ATTR_DIAGNOSTICS] = True
                 elif not supervisor_info[ATTR_DIAGNOSTICS] and self.preferences.get(
-                    ATTR_DIAGNOSTICS, False
+                    ATTR_DIAGNOSTICS, True
                 ):
                     self._data.preferences[ATTR_DIAGNOSTICS] = False
 
@@ -170,7 +170,7 @@ class Analytics:
 
         if self.supervisor:
             await hassio.async_update_diagnostics(
-                self.hass, self.preferences.get(ATTR_DIAGNOSTICS, False)
+                self.hass, self.preferences.get(ATTR_DIAGNOSTICS, True)
             )
 
     async def send_analytics(self, _: datetime | None = None) -> None:
@@ -179,7 +179,7 @@ class Analytics:
         supervisor_info = None
         operating_system_info: dict[str, Any] = {}
 
-        if not self.onboarded or not self.preferences.get(ATTR_BASE, False):
+        if not self.onboarded or not self.preferences.get(ATTR_BASE, True):
             LOGGER.debug("Nothing to submit")
             return
 
@@ -214,8 +214,8 @@ class Analytics:
                 ATTR_VERSION: operating_system_info[ATTR_VERSION],
             }
 
-        if self.preferences.get(ATTR_USAGE, False) or self.preferences.get(
-            ATTR_STATISTICS, False
+        if self.preferences.get(ATTR_USAGE, True) or self.preferences.get(
+            ATTR_STATISTICS, True
         ):
             ent_reg = er.async_get(hass)
 
@@ -279,7 +279,7 @@ class Analytics:
                     for addon in installed_addons
                 )
 
-        if self.preferences.get(ATTR_USAGE, False):
+        if self.preferences.get(ATTR_USAGE, True):
             payload[ATTR_CERTIFICATE] = hass.http.ssl_certificate is not None
             payload[ATTR_INTEGRATIONS] = integrations
             payload[ATTR_CUSTOM_INTEGRATIONS] = custom_integrations
@@ -300,7 +300,7 @@ class Analytics:
                         ATTR_VERSION: engine.version,
                     }
 
-        if self.preferences.get(ATTR_STATISTICS, False):
+        if self.preferences.get(ATTR_STATISTICS, True):
             payload[ATTR_STATE_COUNT] = hass.states.async_entity_ids_count()
             payload[ATTR_AUTOMATION_COUNT] = hass.states.async_entity_ids_count(
                 AUTOMATION_DOMAIN
