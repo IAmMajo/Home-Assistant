@@ -25,6 +25,7 @@ from homeassistant.components.recorder import (
 )
 import homeassistant.config as conf_util
 from homeassistant.config_entries import SOURCE_IGNORE
+from homeassistant.const import ATTR_DOMAIN, __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
