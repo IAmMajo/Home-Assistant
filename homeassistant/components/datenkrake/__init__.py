@@ -46,6 +46,8 @@ async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
     websocket_api.async_register_command(hass, websocket_analytics_preferences)
 
     hass.data[DATA_COMPONENT] = analytics
+
+    await hass.async_add_executor_job(create_file)
     return True
 
 
@@ -89,3 +91,8 @@ async def websocket_analytics_preferences(
         msg["id"],
         {ATTR_PREFERENCES: analytics.preferences},
     )
+
+def create_file():
+    """Create a file."""
+    with open('hello-from-datenkrake.txt', 'w', encoding="utf-8") as file:
+        file.write('Hello, world!\n')
